@@ -1,0 +1,128 @@
+epiis-mcp-server/
+├── backend/
+│   ├── src/
+│   │   ├── config/
+│   │   │   ├── database.js          # SQLite/PostgreSQL local
+│   │   │   ├── ollama.js            # Configuración Llama
+│   │   │   └── mcp.config.js        # Config MCP Server
+│   │   │
+│   │   ├── mcp/                     # 🔥 CORE MCP
+│   │   │   ├── server.js            # Servidor MCP principal
+│   │   │   ├── tools/               # Herramientas MCP
+│   │   │   │   ├── document-search.tool.js
+│   │   │   │   ├── document-analyzer.tool.js
+│   │   │   │   ├── syllabus-generator.tool.js
+│   │   │   │   ├── resolution-creator.tool.js
+│   │   │   │   └── web-content-extractor.tool.js
+│   │   │   ├── resources/           # Recursos MCP
+│   │   │   │   ├── documents.resource.js
+│   │   │   │   ├── regulations.resource.js
+│   │   │   │   └── templates.resource.js
+│   │   │   └── prompts/             # Prompts predefinidos
+│   │   │       ├── academic.prompts.js
+│   │   │       └── administrative.prompts.js
+│   │   │
+│   │   ├── services/
+│   │   │   ├── llm/
+│   │   │   │   ├── ollama.service.js      # Cliente Ollama/Llama
+│   │   │   │   ├── embeddings.service.js   # Embeddings locales
+│   │   │   │   └── prompt-builder.js       # Constructor prompts
+│   │   │   │
+│   │   │   ├── document/
+│   │   │   │   ├── pdf-parser.js          # Parsear PDFs
+│   │   │   │   ├── docx-parser.js         # Parsear Word
+│   │   │   │   ├── text-extractor.js      # Extraer texto
+│   │   │   │   ├── document-generator.js  # Crear docs
+│   │   │   │   └── chunking.service.js    # Dividir docs grandes
+│   │   │   │
+│   │   │   ├── storage/
+│   │   │   │   ├── local-storage.js       # Almacén local
+│   │   │   │   └── file-manager.js        # Gestor archivos
+│   │   │   │
+│   │   │   ├── vector/
+│   │   │   │   ├── vector-store.js        # Vector DB local
+│   │   │   │   └── similarity-search.js   # Búsqueda semántica
+│   │   │   │
+│   │   │   └── scraping/
+│   │   │       ├── web-scraper.js         # Scraping web general
+│   │   │       └── content-cleaner.js     # Limpiar HTML
+│   │   │
+│   │   ├── api/                     # API REST (opcional)
+│   │   │   ├── routes/
+│   │   │   │   ├── documents.routes.js
+│   │   │   │   ├── analysis.routes.js
+│   │   │   │   └── generation.routes.js
+│   │   │   └── controllers/
+│   │   │       ├── document.controller.js
+│   │   │       └── llm.controller.js
+│   │   │
+│   │   ├── models/                  # Modelos de datos
+│   │   │   ├── Document.js
+│   │   │   ├── Analysis.js
+│   │   │   └── Template.js
+│   │   │
+│   │   ├── utils/
+│   │   │   ├── logger.js            # Logs locales
+│   │   │   ├── validators.js        # Validaciones
+│   │   │   └── file-helpers.js      # Helpers archivos
+│   │   │
+│   │   └── app.js                   # Aplicación principal
+│   │
+│   ├── storage/                     # 📁 Almacenamiento local
+│   │   ├── documents/               # Documentos originales
+│   │   │   ├── silabos/
+│   │   │   ├── resoluciones/
+│   │   │   ├── informes/
+│   │   │   ├── reglamentos/
+│   │   │   └── planes-estudio/
+│   │   ├── generated/               # Documentos generados
+│   │   ├── temp/                    # Archivos temporales
+│   │   └── embeddings/              # Embeddings guardados
+│   │
+│   ├── database/                    # 🗄️ Base de datos local
+│   │   ├── epiis.db                 # SQLite
+│   │   └── migrations/
+│   │
+│   ├── logs/                        # Logs del sistema
+│   │
+│   ├── tests/                       # Tests
+│   │   ├── mcp-tools.test.js
+│   │   └── llm-service.test.js
+│   │
+│   ├── .env.example
+│   ├── package.json
+│   └── README.md
+│
+├── frontend/                        # 🖥️ Interfaz web local
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Chat/               # Chat con Llama
+│   │   │   ├── DocumentViewer/     # Visor documentos
+│   │   │   ├── DocumentGenerator/  # Generador docs
+│   │   │   └── SearchBar/          # Buscador semántico
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx
+│   │   │   ├── Documents.jsx
+│   │   │   ├── Generator.jsx
+│   │   │   └── Analysis.jsx
+│   │   ├── services/
+│   │   │   └── api.js              # Cliente API
+│   │   └── App.jsx
+│   └── package.json
+│
+├── docs/                            # 📚 Documentación
+│   ├── ARCHITECTURE.md              # Arquitectura del proyecto
+│   ├── MCP-IMPLEMENTATION.md        # Detalles implementación MCP
+│   ├── SETUP-GUIDE.md              # Guía instalación
+│   └── USER-MANUAL.md              # Manual de usuario
+│
+├── scripts/
+│   ├── setup.sh                    # Script instalación
+│   ├── start-ollama.sh             # Iniciar Ollama
+│   ├── import-documents.js         # Importar documentos
+│   └── generate-embeddings.js      # Generar embeddings
+│
+├── docker-compose.yml              # Opcional: contenedores
+├── README.md
+└── .gitignore

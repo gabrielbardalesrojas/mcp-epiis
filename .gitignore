@@ -1,0 +1,134 @@
+# Dependencias
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Variables de entorno
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Almacenamiento local
+storage/documents/*
+!storage/documents/.gitkeep
+!storage/documents/README.md
+storage/generated/*
+!storage/generated/.gitkeep
+storage/temp/*
+!storage/temp/.gitkeep
+storage/chromadb/*
+!storage/chromadb/.gitkeep
+storage/embeddings/*
+!storage/embeddings/.gitkeep
+
+# Base de datos
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+!database/.gitkeep
+
+# Archivos temporales
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# IDEs y Editores
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+
+# Sistema operativo
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Testing
+coverage/
+.nyc_output/
+*.test.js.snap
+
+# Build
+dist/
+build/
+out/
+.cache/
+
+# Documentos sensibles (ejemplos)
+*.pdf
+*.docx
+*.xlsx
+*.pptx
+# Excepciones para templates
+!storage/templates/*.docx
+!storage/templates/*.pdf
+
+# Ollama (si se descarga localmente)
+*.gguf
+models/
+
+# Python (si se usa)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# Backups
+*.bak
+*.backup
+*.old
+
+# Configuración local
+config.local.js
+config.local.json
+
+# PM2 (si se usa para producción)
+.pm2/
+pm2.config.js
+
+# Docker (si se usa)
+.dockerignore
+docker-compose.override.yml
+
+# Certificados y llaves
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+
+# Datos sensibles
+secrets/
+credentials/
+.credentials/
