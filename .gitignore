@@ -132,3 +132,9 @@ docker-compose.override.yml
 secrets/
 credentials/
 .credentials/
+
+# Ignorar sesiones de WhatsApp y caché
+backend/storage/whatsapp-sessions/
+node_modules/
+.env
+*.db
