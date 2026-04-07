@@ -12,7 +12,8 @@ export class AcademicPortalScraper {
     constructor() {
         this.baseUrl = 'https://academico.unas.edu.pe';
         this.logger = new Logger('AcademicPortalScraper');
-        this.storagePath = path.join(process.cwd(), 'storage', 'documents', 'institutional');
+        // Usamos una ruta fuera de 'storage/documents' para que sea "invisible" al usuario
+        this.storagePath = path.join(process.cwd(), 'data', 'context', 'institutional');
 
         this.schoolAcronyms = [
             'fa-epa',       // Agronomía

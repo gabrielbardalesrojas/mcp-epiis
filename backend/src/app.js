@@ -3,6 +3,8 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import https from 'https';
+import fs from 'fs';
 
 // Importar rutas
 import documentsRouter from './api/routes/documents.routes.js';
@@ -21,6 +23,7 @@ import { InstitutionalContextService } from './services/scraping/institutional-c
 import { DocumentContextService } from './services/document/document-context.js';
 import { initializeDatabase } from './config/database.js';
 import { Logger } from './utils/logger.js';
+import { aiQueue } from './utils/request-queue.js';
 
 // Configuración
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -206,16 +209,17 @@ app.post('/api/chat', async (req, res) => {
         const wantsDOCX = (lowerMsg.includes('word') || lowerMsg.includes('docx')) && !wantsPPT;
         const wantsPDF = !wantsPPT && !wantsXLSX && !wantsDOCX;
 
-        const triggerWords = ['crea', 'genera', 'haz', 'escribe', 'create', 'generate', 'descargar', 'bajame', 'pasame', 'producir', 'elaborar', 'redacta', 'enviame', 'basado en', 'refierete', 'hazme', 'generame', 'ponme'];
-        const formatWords = ['pdf', 'excel', 'xlsx', 'word', 'doc', 'docx', 'presentacion', 'diapositiva', 'ppt', 'pptx', 'archivo', 'silabo', 'reporte', 'hoja de calculo', 'resumen', 'carta', 'oficio', 'resolucion', 'informe'];
-        const genPhrases = ['generame un', 'crear un', 'haz un', 'genera un', 'crea un', 'puedes generar', 'podrias crear', 'necesito un', 'redacta un', 'elabora un', 'hazme un', 'escribe un', 'ponme un', 'generame una', 'crea una', 'haz una'];
+        const triggerWords = ['crea', 'genera', 'haz', 'escribe', 'create', 'generate', 'descargar', 'bajame', 'pasame', 'pásame', 'dame', 'mandame', 'mándame', 'producir', 'elaborar', 'redacta', 'enviame', 'envíame', 'basado en', 'refierete', 'hazme', 'generame', 'ponme', 'armame', 'ármame', 'sacame', 'sácame', 'necesito', 'quiero', 'podrias', 'podrías'];
+        const formatWords = ['pdf', 'excel', 'xlsx', 'word', 'doc', 'docx', 'presentacion', 'diapositiva', 'presentación', 'ppt', 'pptx', 'archivo', 'silabo', 'sílabo', 'reporte', 'hoja de calculo', 'resumen', 'carta', 'oficio', 'resolucion', 'resolución', 'informe', 'documento'];
+        const genPhrases = ['generame un', 'crear un', 'haz un', 'genera un', 'crea un', 'puedes generar', 'podrias crear', 'necesito un', 'redacta un', 'elabora un', 'hazme un', 'escribe un', 'ponme un', 'generame una', 'crea una', 'haz una', 'dame un', 'dame la', 'pásame la', 'pásame el', 'ármame un', 'sácame un', 'quiero un'];
 
         const hasTrigger = triggerWords.some(w => lowerMsg.includes(w));
         const hasFormat = formatWords.some(w => lowerMsg.includes(w));
         const hasGenPhrase = genPhrases.some(p => lowerMsg.includes(p));
         const isGenRequest = (hasTrigger && hasFormat) || hasGenPhrase ||
             (lowerMsg.includes('basado en') && hasTrigger) ||
-            (lowerMsg.includes('pdf') && (lowerMsg.includes('silabo') || lowerMsg.includes('reporte')));
+            (lowerMsg.includes('pdf') && (lowerMsg.includes('silabo') || lowerMsg.includes('reporte') || lowerMsg.includes('examen'))) ||
+            (lowerMsg.includes('archivo') && hasFormat);
 
         // ── Sistema prompt adaptado según tipo de documento solicitado ────
         let formatInstructions = '';
@@ -261,9 +265,10 @@ ${formatInstructions}
 REGLA CRÍTICA DE ACCESO A INFORMACIÓN:
 - Tienes acceso TOTAL a la información institucional proporcionada abajo, la cual es VERÍDICA y ACTUALIZADA.
 - NUNCA digas "no tengo acceso", "no puedo ver comunicados" o frases similares. Usa siempre la información del contexto.
-- BÚSQUEDA DE NOMBRES: Si el usuario pregunta por autoridades (Decano, Director, etc.), busca meticulosamente en el CONTEXTO INSTITUCIONAL. Los nombres suelen aparecer junto a sus cargos.
-- Si generas un documento (PDF/Word/PPT), el contenido debe ser ÚTIL y RELEVANTE basándote en la información disponible.
-- COMIENZO DIRECTO: Cuando el usuario pide un archivo, COMIENZA DIRECTAMENTE con el contenido formateado.
+- SÉ CORDIAL Y COMUNICATIVO: No empieces directamente con el archivo. Saluda, confirma que vas a realizar la tarea y explica brevemente qué información vas a incluir. (Ej: "¡Claro! Con gusto preparo el informe de gestión con los datos que tenemos...")
+- Si el usuario te pide un archivo pero la solicitud es muy vaga, mantén una charla fluida y pregúntale los detalles de forma amable para que el documento sea de calidad.
+- Una vez que hayas dado tu introducción amable, proporciona el contenido formateado (# para títulos, etc.) para que el sistema genere el archivo automáticamente.
+- Tu tono debe ser el de un asistente académico muy dispuesto a ayudar.
 
 OTRAS REGLAS:
 - NUNCA uses etiquetas como <invoke>, <create_file> o <call_function>. El sistema genera el archivo automáticamente a partir de tu texto.
@@ -275,8 +280,10 @@ ${enrichedContext}`,
             { role: 'user', content: message },
         ];
 
-        // ── 1. Obtener respuesta de la IA ────────────────────────────────
-        let assistantResponse = await ollamaService.chat(messages);
+        // ── 1. Obtener respuesta de la IA (CON COLA DE PROCESAMIENTO) ───
+        let assistantResponse = await aiQueue.enqueue(async () => {
+            return await ollamaService.chat(messages);
+        });
 
         // ── 2. Limpiar etiquetas de razonamiento y agent ─────────────────
         let cleanContent = assistantResponse
@@ -343,23 +350,26 @@ ${enrichedContext}`,
 
                 // ── EXCEL ────────────────────────────────────────────────
                 if (wantsXLSX) {
-                    const excelPrompt = `Eres un extractor de datos. Convierte el siguiente texto en JSON para Excel.
-Responde SOLO con el JSON, sin texto adicional, sin backticks, sin explicaciones.
+                    try {
+                        const excelMessages = [
+                            { role: 'system', content: 'Eres un extractor de datos. Convierte texto en JSON para Excel. Responde SOLO con el JSON, sin texto adicional, sin backticks, sin explicaciones.' },
+                            { role: 'user', content: `Convierte el siguiente texto en JSON para Excel.
 Estructura exacta: {"title":"Título","sheetName":"Hoja","headers":["Col1","Col2"],"rows":[["v1","v2"]]}
 Extrae TODOS los datos tabulables (listas, comparaciones, estadísticas).
 
 Texto:
-${cleanContent}`;
-                    let jsonRaw = await ollamaService.generate(excelPrompt, { temperature: 0.05 });
-                    let jsonStr = jsonRaw
-                        .replace(/<think>[\s\S]*?<\/think>/gi, '')
-                        .replace(/```[\w]*\n?/g, '').replace(/```/g, '')
-                        .match(/\{[\s\S]*\}/)?.[0];
-                    try {
+${cleanContent}` }
+                        ];
+                        let jsonRaw = await ollamaService.chat(excelMessages, { temperature: 0.05 });
+                        let jsonStr = jsonRaw
+                            .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                            .replace(/```[\w]*\n?/g, '').replace(/```/g, '')
+                            .match(/\{[\s\S]*\}/)?.[0];
                         const excelData = JSON.parse(jsonStr);
                         const r = await documentService.generateExcel(excelData);
                         generatedFile = { fileName: r.fileName, path: r.path, format: 'xlsx' };
-                    } catch {
+                    } catch (excelErr) {
+                        logger.warn('Excel falló, generando PDF como fallback:', excelErr.message);
                         const r = await documentService.generatePDF('Reporte Académico', cleanContent, null, META);
                         generatedFile = { fileName: r.fileName, path: r.path, format: 'pdf', note: 'Excel simplificado a PDF' };
                     }
@@ -379,9 +389,13 @@ ${cleanContent}`;
                         });
                     };
 
-                    // Intentar con JSON primero, luego con parseo de texto
-                    const pptPrompt = `Eres un diseñador de presentaciones. Convierte este contenido en JSON para PowerPoint.
-Responde SOLO con el JSON, sin texto adicional, sin backticks.
+                    let pptData = null;
+
+                    try {
+                        // Intentar con JSON primero
+                        const pptMessages = [
+                            { role: 'system', content: 'Eres un diseñador de presentaciones. Convierte contenido en JSON para PowerPoint. Responde SOLO con el JSON, sin texto adicional, sin backticks.' },
+                            { role: 'user', content: `Convierte este contenido en JSON para PowerPoint.
 Estructura exacta:
 {
   "title": "Título principal",
@@ -395,16 +409,15 @@ Estructura exacta:
 Crea 8-10 slides con contenido real y detallado. Empieza con introducción, termina con conclusiones.
 
 Contenido:
-${cleanContent}`;
+${cleanContent}` }
+                        ];
 
-                    let jsonRaw = await ollamaService.generate(pptPrompt, { temperature: 0.05 });
-                    let jsonStr = jsonRaw
-                        .replace(/<think>[\s\S]*?<\/think>/gi, '')
-                        .replace(/```[\w]*\n?/g, '').replace(/```/g, '')
-                        .match(/\{[\s\S]*\}/)?.[0];
+                        let jsonRaw = await ollamaService.chat(pptMessages, { temperature: 0.05 });
+                        let jsonStr = jsonRaw
+                            .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                            .replace(/```[\w]*\n?/g, '').replace(/```/g, '')
+                            .match(/\{[\s\S]*\}/)?.[0];
 
-                    let pptData = null;
-                    try {
                         pptData = JSON.parse(jsonStr);
                         // Normalizar: algunos modelos usan bulletPoints en lugar de bullets
                         if (pptData.slides) {
@@ -413,9 +426,9 @@ ${cleanContent}`;
                                 bullets: s.bullets || s.bulletPoints || s.points || [],
                             }));
                         }
-                    } catch {
+                    } catch (jsonErr) {
                         // Fallback: parsear el texto con formato SLIDE:
-                        logger.warn('JSON PPT inválido, usando parseo de texto SLIDE:');
+                        logger.warn('JSON PPT inválido, usando parseo de texto SLIDE:', jsonErr.message);
                         const parsedSlides = parseSlidesFromText(cleanContent);
                         if (parsedSlides.length > 0) {
                             pptData = {
@@ -570,6 +583,39 @@ REGLAS DE FORMATO OBLIGATORIAS:
     }
 });
 
+// Actualizar configuración de IA (unificado)
+app.post('/api/settings/ai', async (req, res) => {
+    try {
+        const { mode, cloudConfig } = req.body;
+        
+        // Actualizar API key y modelo cloud si se proporcionan
+        if (cloudConfig) {
+            if (cloudConfig.model) ollamaService.setCloudModel(cloudConfig.model);
+            if (cloudConfig.apiKey && ollamaService.providers.cloud) {
+                ollamaService.providers.cloud.apiKey = cloudConfig.apiKey;
+            }
+            if (cloudConfig.host && ollamaService.providers.cloud) {
+                ollamaService.providers.cloud.host = cloudConfig.host;
+            }
+        }
+
+        // Cambiar modo si se especifica
+        if (mode) {
+            if (['local', 'cloud', 'auto'].includes(mode)) {
+                ollamaService.setMode(mode);
+                logger.info(`Modo de IA actualizado a: ${mode}`);
+            } else {
+                return res.status(400).json({ error: 'Modo inválido. Debe ser "local", "cloud" o "auto".' });
+            }
+        }
+
+        res.json({ success: true, mode: ollamaService.mode, status: ollamaService.getStatus() });
+    } catch (error) {
+        logger.error('Error actualizando configuración de IA', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Búsqueda semántica
 app.post('/api/search', async (req, res) => {
     try {
@@ -588,28 +634,6 @@ app.post('/api/search', async (req, res) => {
         });
     } catch (error) {
         logger.error('Error en búsqueda', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Endpoint para cambiar configuración de IA (Local vs Cloud)
-app.post('/api/settings/ai', async (req, res) => {
-    try {
-        const { mode, cloudConfig } = req.body;
-
-        if (!mode || !['local', 'cloud'].includes(mode)) {
-            return res.status(400).json({ error: 'Modo inválido. Debe ser "local" o "cloud".' });
-        }
-
-        const status = ollamaService.switchMode(mode, cloudConfig);
-        logger.info(`Modo de IA cambiado a: ${mode}`);
-
-        res.json({
-            success: true,
-            status
-        });
-    } catch (error) {
-        logger.error('Error al cambiar modo de IA', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -737,10 +761,26 @@ const startServer = async () => {
         whatsappService.setOllamaService(ollamaService);
         logger.info('WhatsApp service configurado con Ollama');
 
-        app.listen(PORT, '0.0.0.0', () => {
-            logger.info(`🚀 API Server corriendo en http://localhost:${PORT}`);
-            logger.info(`📚 Documentación: http://localhost:${PORT}/api/health`);
-        });
+        const certPath = path.join(__dirname, '../../certs/server.crt');
+        const keyPath = path.join(__dirname, '../../certs/server.key');
+        let server;
+
+        if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+            const options = {
+                key: fs.readFileSync(keyPath),
+                cert: fs.readFileSync(certPath)
+            };
+            server = https.createServer(options, app);
+            server.listen(PORT, '0.0.0.0', () => {
+                logger.info(`🚀 API Server corriendo en HTTPS: https://localhost:${PORT}`);
+                logger.info(`📚 Documentación: https://localhost:${PORT}/api/health`);
+            });
+        } else {
+            app.listen(PORT, '0.0.0.0', () => {
+                logger.info(`🚀 API Server corriendo en HTTP: http://localhost:${PORT}`);
+                logger.info(`📚 Documentación: http://localhost:${PORT}/api/health`);
+            });
+        }
 
         // Auto-indexar documentos en background (no bloquea el inicio)
         autoIndexDocuments().catch(e => logger.warn('Auto-indexación falló:', e.message));

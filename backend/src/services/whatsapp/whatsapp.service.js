@@ -6,6 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Logger } from '../../utils/logger.js';
 import { getDatabase } from '../../config/database.js';
+import { aiQueue } from '../../utils/request-queue.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,6 +119,7 @@ class WhatsAppService {
             qrDataUrl: null,
             status: 'initializing',
             phoneNumber: null,
+            errorMessage: null,
         };
 
         this.sessions.set(userId, sessionData);
@@ -130,6 +132,7 @@ class WhatsAppService {
                 }),
                 puppeteer: {
                     headless: true,
+                    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null, // Permitir usar cromo del sistema si es necesario
                     args: [
                         '--no-sandbox',
                         '--disable-setuid-sandbox',
@@ -137,8 +140,17 @@ class WhatsAppService {
                         '--disable-accelerated-2d-canvas',
                         '--no-first-run',
                         '--disable-gpu',
+                        '--disable-extensions',
+                        '--disable-software-rasterizer',
+                        '--single-process',
+                        '--no-zygote',
+                        '--disable-web-security',
                     ],
                 },
+                webVersionCache: {
+                    type: 'remote',
+                    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+                }
             });
 
             sessionData.client = client;
@@ -174,7 +186,7 @@ class WhatsAppService {
 
             // Evento listo
             client.on('ready', () => {
-                this.logger.info(`WhatsApp listo para usuario ${userId}`);
+                this.logger.info(`✅ [WHATSAPP] TOTALMENTE CONECTADO para usuario ${userId}`);
                 sessionData.status = 'connected';
                 sessionData.qr = null;
                 sessionData.qrDataUrl = null;
@@ -191,7 +203,16 @@ class WhatsAppService {
 
             // Evento de mensaje entrante
             client.on('message', async (msg) => {
+                this.logger.info(`[WHATSAPP] Mensaje recibido de ${msg.from}: ${msg.body.substring(0, 20)}...`);
                 await this._handleIncomingMessage(userId, msg);
+            });
+
+            // También registrar mensajes enviados por uno mismo (útil para pruebas)
+            client.on('message_create', async (msg) => {
+                if (msg.fromMe && (msg.body === 'test' || msg.body === 'ping')) {
+                    this.logger.info(`[WHATSAPP] Auto-mensaje de prueba detectado: ${msg.body}`);
+                    await msg.reply('pong 🏓 (Conexión activa)');
+                }
             });
 
             // Evento desconexión
@@ -228,9 +249,20 @@ class WhatsAppService {
             this.logger.info(`WhatsApp inicializado para usuario ${userId}, status: ${sessionData.status}`);
             return { status: sessionData.status };
         } catch (error) {
+            let userFriendlyMessage = error.message;
+
+            // Detectar errores de dependencias de Linux (Puppeteer/Chromium)
+            if (error.message.includes('shared libraries') || error.message.includes('libatk') || error.message.includes('libnss3')) {
+                userFriendlyMessage = 'Error: Faltan dependencias del sistema para WhatsApp. Por favor, ejecuta en el servidor: sudo bash backend/scripts/install-puppeteer-deps.sh';
+                this.logger.error('❌ ERROR CRÍTICO: Faltan dependencias de Puppeteer en el sistema.');
+            } else if (error.message.includes('Timeout')) {
+                userFriendlyMessage = 'Error: La conexión de WhatsApp tardó demasiado en iniciar. Inténtalo de nuevo.';
+            }
+
             this.logger.error(`Error inicializando WhatsApp para usuario ${userId}:`, error);
             sessionData.status = 'error';
-            throw error;
+            sessionData.errorMessage = userFriendlyMessage;
+            throw new Error(userFriendlyMessage);
         }
     }
 
@@ -272,6 +304,7 @@ class WhatsAppService {
             status: session.status,
             phoneNumber: session.phoneNumber,
             hasQR: !!session.qrDataUrl,
+            errorMessage: session.errorMessage,
         };
     }
 
@@ -311,11 +344,16 @@ class WhatsAppService {
         this.logger.info(`Mensaje WhatsApp entrante para usuario ${userId}: "${userMessage.substring(0, 50)}..."`);
 
         try {
+            this.logger.info(`[WHATSAPP] Procesando mensaje de usuario ${userId}...`);
+
             // Verificar que Ollama esté disponible
             if (!this.ollamaService) {
+                this.logger.error('[WHATSAPP] ERROR: OllamaService no inyectado');
                 await msg.reply('⚠️ El servicio de IA no está disponible en este momento.');
                 return;
             }
+
+            this.logger.info(`[WHATSAPP] Usando IA en modo: ${this.ollamaService.mode}`);
 
             // === CAPA 1: Contexto institucional (scraping) ===
             let enrichedContext = '';
@@ -405,38 +443,29 @@ class WhatsAppService {
             // System prompt con personalidad empática y natural
             const systemPrompt = `Eres el asistente virtual de la FIIS (Facultad de Ingeniería en Informática y Sistemas) de la UNAS (Universidad Nacional Agraria de la Selva), en Tingo María, Huánuco, Perú.
 
-TU PERSONALIDAD:
-- Eres amigable, empático y natural. Hablas como un compañero de universidad que sabe mucho.
-- Usas un tono cercano pero respetuoso. Puedes tutear al usuario.
-- Usas emojis con naturalidad (sin exagerar).
-- Si el usuario dice algo fuera de tema ("tengo sueño", "estoy aburrido", "qué tal"), responde con empatía y un toque de humor. Por ejemplo: "Jaja el sueño es el enemigo del estudiante 😴 Pero aquí estoy para ayudarte con lo que necesites de la FIIS 📚"
-- NUNCA cortes una conversación de golpe. Sé empático primero, luego redirige suavemente.
-- Si te hacen preguntas personales o fuera de tema, responde brevemente con gracia y luego menciona sutilmente que puedes ayudar con temas de la FIIS.
-- Puedes hacer chistes relacionados con la vida universitaria.
+            TU PERSONALIDAD:
+            - Eres amigable, empático y natural. Hablas como un compañero de universidad que sabe mucho.
+            - Usas un tono cercano pero respetuoso. Puedes tutear al usuario.
+            - Usas emojis con naturalidad (sin exagerar).
 
-TU CONOCIMIENTO:
-- Tienes acceso a información institucional de la FIIS-UNAS que se te proporciona abajo.
-- Para preguntas académicas, usa la información del contexto proporcionado.
-- Si la información está en el contexto, responde con seguridad y de forma directa.
-- Si NO encuentras la información específica, di algo como: "Hmm, no tengo ese dato específico en mi sistema 🤔 Te recomiendo consultar con la oficina de la FIIS o escribir a [contacto correspondiente]."
-- NUNCA inventes datos académicos (nombres, fechas, números). Si no lo sabes, admítelo con naturalidad.
+            TU CONOCIMIENTO Y REGLAS DE PRECISIÓN:
+            - TU RESPUESTA DEBE BASARSE PRIORITARIAMENTE EN EL CONTEXTO INSTITUCIONAL ABAJO.
+            - Si el contexto tiene la información (horarios, requisitos, nombres), ÚSALO.
+            - Si el contexto NO tiene la información, NO INVENTES DATOS. Di: "Lo siento, no tengo ese dato específico en mi base de datos actual. Te sugiero consultar en la oficina de la FIIS."
+            - Sé natural: No digas "Según el contexto..." o "El documento indica...". Habla como si tú supieras la información.
+            
+            ESTILO DE RESPUESTA (WhatsApp):
+            - Respuestas cortas y directas. Formato WhatsApp: *negrita*, _cursiva_, ~tachado~.
+            - Usa listas con viñetas. 
+            
+            CAPACIDADES DE DOCUMENTOS:
+            - Puedes generar PDF, Word, Excel o PPT si el usuario lo pide.
+            - Si vas a generar un documento, COMIENZA DIRECTAMENTE con el contenido formateado.
+            ${formatInstructions}
+            
+            CONTEXTO INSTITUCIONAL Y DE DOCUMENTOS:
+            ${enrichedContext}`;
 
-ESTILO DE RESPUESTA (WhatsApp):
-- Respuestas cortas y directas (máximo 500 caracteres cuando sea posible).
-- Usa formato WhatsApp: *negrita*, _cursiva_, ~tachado~.
-- Usa listas con viñetas cuando sea apropiado.
-- Entiende mensajes cortos e informales ("ppp" = prácticas pre-profesionales, "profe" = profesor, "deca" = decano, etc.).
-- Si el usuario escribe algo muy corto o ambiguo, intenta inferir qué necesita basándote en el historial de conversación.
-
-CAPACIDADES DE DOCUMENTOS:
-- Puedes generar documentos (PDF, Word, Excel, PowerPoint) cuando el usuario lo solicite.
-- Si el usuario pide un archivo, genera el contenido estructurado directamente.
-- COMIENZA DIRECTAMENTE con el contenido formateado, sin explicaciones previas.
-${formatInstructions}
-
-${enrichedContext}`;
-
-            // Construir mensajes con historial de conversación
             const messages = [{ role: 'system', content: systemPrompt }];
 
             // Agregar historial previo
@@ -449,7 +478,9 @@ ${enrichedContext}`;
             messages.push({ role: 'user', content: userMessage });
 
             this.logger.info(`Generando respuesta con Ollama (Modo: ${this.ollamaService.mode})...`);
-            const response = await this.ollamaService.chat(messages);
+            const response = await aiQueue.enqueue(async () => {
+                return await this.ollamaService.chat(messages);
+            });
 
             if (response) {
                 // Limpiar etiquetas de razonamiento
@@ -481,17 +512,19 @@ ${enrichedContext}`;
 
                         if (wantsXLSX) {
                             // --- EXCEL ---
-                            const excelPrompt = `Eres un extractor de datos. Convierte el siguiente texto en JSON para Excel.
-Responde SOLO con el JSON, sin texto adicional, sin backticks.
+                            try {
+                                const excelMessages = [
+                                    { role: 'system', content: 'Eres un extractor de datos. Convierte texto en JSON para Excel. Responde SOLO con el JSON, sin texto adicional, sin backticks.' },
+                                    { role: 'user', content: `Convierte el siguiente texto en JSON para Excel.
 Estructura: {"title":"Título","sheetName":"Hoja","headers":["Col1","Col2"],"rows":[["v1","v2"]]}
 
-Texto:\n${cleanResponse}`;
-                            let jsonRaw = await this.ollamaService.generate(excelPrompt, { temperature: 0.05 });
-                            let jsonStr = jsonRaw
-                                .replace(/<think>[\s\S]*?<\/think>/gi, '')
-                                .replace(/```[\w]*\n?/g, '').replace(/```/g, '')
-                                .match(/\{[\s\S]*\}/)?.[0];
-                            try {
+Texto:\n${cleanResponse}` }
+                                ];
+                                let jsonRaw = await this.ollamaService.chat(excelMessages, { temperature: 0.05 });
+                                let jsonStr = jsonRaw
+                                    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                                    .replace(/```[\w]*\n?/g, '').replace(/```/g, '')
+                                    .match(/\{[\s\S]*\}/)?.[0];
                                 const excelData = JSON.parse(jsonStr);
                                 const r = await this.documentService.generateExcel(excelData);
                                 generatedFile = { fileName: r.fileName, path: r.path, format: 'xlsx' };
@@ -503,19 +536,22 @@ Texto:\n${cleanResponse}`;
 
                         } else if (wantsPPT) {
                             // --- POWERPOINT ---
-                            const pptPrompt = `Convierte este contenido en JSON para PowerPoint.
-Responde SOLO con el JSON, sin texto adicional, sin backticks.
+                            let pptData = null;
+                            try {
+                                const pptMessages = [
+                                    { role: 'system', content: 'Convierte contenido en JSON para PowerPoint. Responde SOLO con el JSON, sin texto adicional, sin backticks.' },
+                                    { role: 'user', content: `Convierte este contenido en JSON para PowerPoint.
 Estructura: {"title":"Título","subtitle":"Sub","slides":[{"title":"Slide","bullets":["p1","p2"]}]}
 Crea 8-10 slides.
 
-Contenido:\n${cleanResponse}`;
-                            let jsonRaw = await this.ollamaService.generate(pptPrompt, { temperature: 0.05 });
-                            let jsonStr = jsonRaw
-                                .replace(/<think>[\s\S]*?<\/think>/gi, '')
-                                .replace(/```[\w]*\n?/g, '').replace(/```/g, '')
-                                .match(/\{[\s\S]*\}/)?.[0];
-                            try {
-                                const pptData = JSON.parse(jsonStr);
+Contenido:\n${cleanResponse}` }
+                                ];
+                                let jsonRaw = await this.ollamaService.chat(pptMessages, { temperature: 0.05 });
+                                let jsonStr = jsonRaw
+                                    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                                    .replace(/```[\w]*\n?/g, '').replace(/```/g, '')
+                                    .match(/\{[\s\S]*\}/)?.[0];
+                                pptData = JSON.parse(jsonStr);
                                 if (pptData.slides) {
                                     pptData.slides = pptData.slides.map(s => ({
                                         ...s, bullets: s.bullets || s.bulletPoints || s.points || [],

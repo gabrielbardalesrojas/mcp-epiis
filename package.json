@@ -1,0 +1,14 @@
+{
+  "name": "epiis-mcp-fullstack",
+  "version": "1.0.0",
+  "description": "Sistema de gestión académica EPIIS - Control centralizado",
+  "scripts": {
+    "install:all": "npm install --prefix backend && npm install --prefix frontend",
+    "dev": "concurrently \"npm run api --prefix backend\" \"npm run dev --prefix frontend\" \"ngrok http --domain=krystina-weedier-howard.ngrok-free.dev https://localhost:3000\"",
+    "start": "npm run dev",
+    "setup": "npm run setup --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

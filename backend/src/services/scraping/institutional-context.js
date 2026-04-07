@@ -31,7 +31,8 @@ export class InstitutionalContextService {
             noticias: ['noticia', 'noticias', 'comunicado', 'comunicados', 'anuncio', 'anuncios', 'actualidad', 'novedades', 'prensa', 'boletín'],
             eventos: ['evento', 'eventos', 'charla', 'charlas', 'conferencia', 'conferencias', 'seminario', 'taller', 'talleres', 'reunión', 'reunion', 'maratón', 'maraton', 'pitch', 'demo day'],
         };
-        this.institutionalDocsDir = path.join(process.cwd(), 'storage', 'documents', 'institutional');
+        // Cambiamos a 'data/context' para que NO aparezcan en la lista de gestión de documentos
+        this.institutionalDocsDir = path.join(process.cwd(), 'data', 'context', 'institutional');
     }
 
     /**
@@ -46,24 +47,23 @@ export class InstitutionalContextService {
             this.logger.info(`Cache cargado: ${this.cache.size} páginas (actualizado: ${parsed.updatedAt || 'desconocido'})`);
             this.initialized = true;
 
-            // Integrar datos del portal académico siempre al inicio para asegurar frescura
+            // Integrar datos del portal académico siempre al inicio
             this.portalScraper.run().then(() => {
                 this.indexInstitutionalDocs().catch(e => this.logger.error('Error indexando docs institucionales', e));
             }).catch(e => this.logger.error('Error en portal scraper', e));
 
-            // Auto-refresh si cache es viejo
+            // Auto-refresh si cache es viejo (más de 24h)
             if (this.isCacheStale()) {
-                this.logger.info('Cache tiene más de 24h, iniciando auto-refresh en background...');
+                this.logger.info('Cache antiguo, actualizando información en background...');
                 this.scrapeAllUrls().catch(e => this.logger.error('Error en auto-refresh', e));
             }
         } catch {
-            this.logger.info('No hay cache previo, se creará uno nuevo');
+            this.logger.info('Iniciando carga de conocimiento institucional...');
             this.initialized = true;
-            // Scrapear inmediatamente si no hay cache
-            this.logger.info('Iniciando scraping inicial en background...');
+            
+            // Scrapear inmediatamente si no hay nada
             this.scrapeAllUrls().catch(e => this.logger.error('Error en scraping inicial', e));
 
-            // Integrar datos del portal académico
             this.portalScraper.run().then(() => {
                 this.indexInstitutionalDocs().catch(e => this.logger.error('Error indexando docs institucionales', e));
             }).catch(e => this.logger.error('Error en portal scraper', e));
